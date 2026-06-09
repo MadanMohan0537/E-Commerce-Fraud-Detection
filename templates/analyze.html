@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FraudShield — Data Analyzer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f0f13; --surface: #18181f; --surface2: #22222c;
+      --border: rgba(255,255,255,0.08); --border-hover: rgba(255,255,255,0.16);
+      --text: #f0f0f4; --muted: #8888a0;
+      --accent: #6c63ff; --accent-light: #9b94ff;
+      --danger: #ff4d6d; --warning: #ff9f43; --success: #2ecc71; --info: #4facfe;
+      --radius: 12px; --radius-sm: 8px;
+    }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem 2rem; border-bottom: 1px solid var(--border);
+      background: var(--surface); position: sticky; top: 0; z-index: 100;
+    }
+    .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.1rem; letter-spacing: -0.02em; text-decoration: none; color: var(--text); }
+    .logo-icon { width: 32px; height: 32px; background: linear-gradient(135deg, var(--accent), var(--info)); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+    .nav-links { display: flex; gap: 1rem; align-items: center; }
+    .nav-link { font-size: 13px; color: var(--muted); text-decoration: none; padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border); transition: all 0.2s; }
+    .nav-link:hover { color: var(--text); border-color: var(--border-hover); }
+    .nav-link.active { background: rgba(108,99,255,0.15); color: var(--accent-light); border-color: rgba(108,99,255,0.3); }
+
+    .page { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+
+    .page-header { margin-bottom: 2rem; }
+    .page-header h1 { font-size: 1.8rem; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 0.4rem; }
+    .page-header p { color: var(--muted); font-size: 14px; }
+
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; margin-bottom: 1.5rem; }
+    .card-title { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 1.25rem; display: flex; align-items: center; gap: 8px; }
+    .card-title::before { content: ''; display: inline-block; width: 3px; height: 13px; background: var(--accent); border-radius: 2px; }
+
+    /* UPLOAD ZONE */
+    .upload-zone {
+      border: 2px dashed var(--border-hover); border-radius: var(--radius);
+      padding: 3rem 2rem; text-align: center; cursor: pointer;
+      transition: all 0.2s; position: relative;
+    }
+    .upload-zone:hover, .upload-zone.drag-over { border-color: var(--accent); background: rgba(108,99,255,0.05); }
+    .upload-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+    .upload-icon { font-size: 2.5rem; margin-bottom: 0.75rem; }
+    .upload-title { font-size: 1rem; font-weight: 600; margin-bottom: 0.4rem; }
+    .upload-sub { font-size: 13px; color: var(--muted); }
+    .upload-formats { display: flex; justify-content: center; gap: 8px; margin-top: 1rem; }
+    .fmt-badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; border: 1px solid var(--border-hover); color: var(--muted); }
+
+    /* FILE INFO */
+    .file-info { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--surface2); border-radius: var(--radius-sm); margin-bottom: 1rem; }
+    .file-icon { font-size: 1.5rem; }
+    .file-details { flex: 1; }
+    .file-name { font-size: 14px; font-weight: 500; }
+    .file-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .file-clear { background: none; border: 1px solid var(--border); color: var(--muted); padding: 5px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.2s; font-family: 'Inter', sans-serif; }
+    .file-clear:hover { border-color: var(--danger); color: var(--danger); }
+
+    /* DATA PREVIEW TABLE */
+    .table-wrap { overflow-x: auto; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead { background: var(--surface2); }
+    th { padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; border-bottom: 1px solid var(--border); }
+    td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text); white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--surface2); }
+    .badge-fraud { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 20px; background: rgba(255,77,109,0.15); color: #ff4d6d; font-weight: 500; }
+    .badge-safe { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 20px; background: rgba(46,204,113,0.12); color: #2ecc71; font-weight: 500; }
+
+    /* QUERY INPUT */
+    .query-wrap { display: flex; gap: 10px; align-items: flex-start; }
+    .query-input {
+      flex: 1; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); color: var(--text);
+      font-family: 'Inter', sans-serif; font-size: 14px;
+      padding: 12px 16px; outline: none; transition: border-color 0.2s;
+      resize: none; min-height: 48px;
+    }
+    .query-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(108,99,255,0.12); }
+    .query-input::placeholder { color: var(--muted); }
+    .btn-ask {
+      padding: 12px 22px; background: linear-gradient(135deg, var(--accent), #8b84ff);
+      color: white; border: none; border-radius: var(--radius-sm);
+      font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 600;
+      cursor: pointer; white-space: nowrap; transition: opacity 0.2s;
+    }
+    .btn-ask:hover { opacity: 0.88; }
+    .btn-ask:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* SUGGESTIONS */
+    .suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 1rem; }
+    .suggestion-chip {
+      font-size: 12px; padding: 6px 14px; border-radius: 20px;
+      border: 1px solid var(--border); color: var(--muted);
+      cursor: pointer; transition: all 0.2s; background: none;
+      font-family: 'Inter', sans-serif;
+    }
+    .suggestion-chip:hover { border-color: var(--accent); color: var(--accent-light); background: rgba(108,99,255,0.08); }
+
+    /* RESULTS */
+    .results-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; flex-wrap: gap; gap: 10px; }
+    .results-title { font-size: 14px; font-weight: 600; }
+    .results-meta { font-size: 12px; color: var(--muted); }
+    .results-actions { display: flex; gap: 8px; }
+    .btn-sql {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 12px; font-weight: 600; padding: 7px 14px;
+      border: 1px solid rgba(108,99,255,0.4); color: var(--accent-light);
+      background: rgba(108,99,255,0.1); border-radius: var(--radius-sm);
+      cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.2s;
+    }
+    .btn-sql:hover { background: rgba(108,99,255,0.2); }
+    .btn-export {
+      font-size: 12px; font-weight: 600; padding: 7px 14px;
+      border: 1px solid var(--border); color: var(--muted);
+      background: none; border-radius: var(--radius-sm);
+      cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.2s;
+    }
+    .btn-export:hover { border-color: var(--success); color: var(--success); }
+
+    /* SQL PANEL */
+    .sql-panel {
+      background: #0d1117; border: 1px solid rgba(108,99,255,0.25);
+      border-radius: var(--radius-sm); padding: 1rem 1.25rem;
+      margin-bottom: 1rem; display: none;
+    }
+    .sql-panel.visible { display: block; }
+    .sql-panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .sql-label { font-size: 11px; font-weight: 600; color: var(--accent-light); text-transform: uppercase; letter-spacing: 0.07em; }
+    .btn-copy { font-size: 11px; padding: 4px 10px; border: 1px solid var(--border); color: var(--muted); background: none; border-radius: 5px; cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.2s; }
+    .btn-copy:hover { border-color: var(--accent); color: var(--accent-light); }
+    .sql-code { font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.7; color: #e6edf3; white-space: pre-wrap; }
+    .kw { color: #ff7b72; } .fn { color: #d2a8ff; } .col { color: #79c0ff; }
+    .str { color: #a5d6ff; } .num { color: #ffa657; } .cm { color: #8b949e; }
+
+    /* PAGINATION */
+    .pagination { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 1rem; }
+    .page-btn { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: none; color: var(--muted); font-size: 13px; cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.2s; }
+    .page-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-light); }
+    .page-btn.active { background: rgba(108,99,255,0.15); border-color: rgba(108,99,255,0.4); color: var(--accent-light); }
+    .page-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .page-info { font-size: 12px; color: var(--muted); padding: 0 8px; }
+
+    /* STATS SUMMARY */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 1.5rem; }
+    .stat-card { background: var(--surface2); border-radius: var(--radius-sm); padding: 12px 14px; }
+    .stat-val { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.02em; }
+    .stat-lbl { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+    /* EMPTY / LOADING */
+    .empty { text-align: center; padding: 3rem; color: var(--muted); }
+    .empty-icon { font-size: 2.5rem; opacity: 0.3; margin-bottom: 0.75rem; }
+    .empty p { font-size: 14px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.2); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; vertical-align: middle; margin-right: 6px; }
+
+    /* HISTORY */
+    .history-list { display: flex; flex-direction: column; gap: 6px; }
+    .history-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--surface2); border-radius: var(--radius-sm); cursor: pointer; transition: background 0.2s; font-size: 13px; }
+    .history-item:hover { background: rgba(108,99,255,0.1); }
+    .history-q { flex: 1; color: var(--text); }
+    .history-rows { font-size: 11px; color: var(--muted); }
+    .history-rerun { font-size: 11px; color: var(--accent-light); }
+
+    .section-divider { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="logo">
+    <div class="logo-icon">🛡️</div>
+    FraudShield
+  </a>
+  <div class="nav-links">
+    <a href="/" class="nav-link">Transaction Check</a>
+    <a href="/analyze" class="nav-link active">Data Analyzer</a>
+  </div>
+</nav>
+
+<div class="page">
+
+  <div class="page-header">
+    <h1>Data Analyzer</h1>
+    <p>Upload your transaction dataset and ask questions in plain English</p>
+  </div>
+
+  <!-- UPLOAD -->
+  <div class="card" id="uploadCard">
+    <div class="card-title">Upload Dataset</div>
+    <div id="fileInfo" style="display:none"></div>
+    <div class="upload-zone" id="uploadZone">
+      <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" />
+      <div class="upload-icon">📂</div>
+      <div class="upload-title">Drop your file here or click to browse</div>
+      <div class="upload-sub">Supports CSV and Excel files up to 50MB</div>
+      <div class="upload-formats">
+        <span class="fmt-badge">CSV</span>
+        <span class="fmt-badge">XLSX</span>
+        <span class="fmt-badge">XLS</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- DATASET STATS + PREVIEW -->
+  <div id="dataSection" style="display:none">
+
+    <div class="stats-grid" id="statsGrid"></div>
+
+    <div class="card">
+      <div class="card-title">Data Preview <span style="font-size:11px;font-weight:400;margin-left:6px;color:var(--muted)" id="previewMeta"></span></div>
+      <div class="table-wrap" id="previewTable"></div>
+    </div>
+
+    <!-- QUERY -->
+    <div class="card">
+      <div class="card-title">Ask a Question</div>
+      <div class="query-wrap">
+        <textarea class="query-input" id="queryInput" rows="1"
+          placeholder="e.g. Show all fraudulent transactions above $1000…"></textarea>
+        <button class="btn-ask" id="askBtn" onclick="runQuery()">Ask →</button>
+      </div>
+      <div class="suggestions" id="suggestions"></div>
+    </div>
+
+    <!-- RESULTS -->
+    <div id="resultsSection" style="display:none">
+      <div class="card">
+        <div class="results-header">
+          <div>
+            <div class="results-title" id="resultsTitle">Results</div>
+            <div class="results-meta" id="resultsMeta"></div>
+          </div>
+          <div class="results-actions">
+            <button class="btn-sql" onclick="toggleSQL()">
+              <span>{ }</span> Show SQL
+            </button>
+            <button class="btn-export" onclick="exportCSV()">↓ Export CSV</button>
+          </div>
+        </div>
+
+        <div class="sql-panel" id="sqlPanel">
+          <div class="sql-panel-header">
+            <span class="sql-label">⚡ Generated SQL Query</span>
+            <button class="btn-copy" onclick="copySQL()">Copy</button>
+          </div>
+          <div class="sql-code" id="sqlCode"></div>
+        </div>
+
+        <div class="table-wrap" id="resultsTable"></div>
+        <div class="pagination" id="pagination"></div>
+      </div>
+    </div>
+
+    <!-- HISTORY -->
+    <div class="card" id="historyCard" style="display:none">
+      <div class="card-title">Query History</div>
+      <div class="history-list" id="historyList"></div>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+let allData = [];
+let columns = [];
+let currentResults = [];
+let currentSQL = '';
+let currentPage = 1;
+const PAGE_SIZE = 15;
+let queryHistory = [];
+
+// ── FILE UPLOAD ──────────────────────────────────────────────
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) processFile(file);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) processFile(e.target.files[0]);
+});
+
+function processFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  const reader = new FileReader();
+
+  if (ext === 'csv') {
+    reader.onload = e => {
+      const rows = parseCSV(e.target.result);
+      loadData(rows, file);
+    };
+    reader.readAsText(file);
+  } else if (ext === 'xlsx' || ext === 'xls') {
+    reader.onload = e => {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      loadData(rows, file);
+    };
+    reader.readAsArrayBuffer(file);
+  } else {
+    alert('Please upload a CSV or Excel file.');
+  }
+}
+
+function parseCSV(text) {
+  const lines = text.trim().split('\n');
+  const headers = splitCSVLine(lines[0]);
+  return lines.slice(1).filter(l => l.trim()).map(line => {
+    const vals = splitCSVLine(line);
+    const obj = {};
+    headers.forEach((h, i) => obj[h.trim()] = (vals[i] || '').trim());
+    return obj;
+  });
+}
+
+function splitCSVLine(line) {
+  const result = []; let cur = ''; let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '"') { inQ = !inQ; }
+    else if (line[i] === ',' && !inQ) { result.push(cur); cur = ''; }
+    else cur += line[i];
+  }
+  result.push(cur);
+  return result;
+}
+
+function loadData(rows, file) {
+  if (!rows.length) { alert('No data found in file.'); return; }
+  allData = rows;
+  columns = Object.keys(rows[0]);
+
+  showFileInfo(file, rows.length);
+  showStats(rows);
+  showPreview(rows);
+  showSuggestions();
+  document.getElementById('dataSection').style.display = 'block';
+  document.getElementById('uploadZone').style.display = 'none';
+}
+
+function showFileInfo(file, rowCount) {
+  const kb = (file.size / 1024).toFixed(1);
+  const info = document.getElementById('fileInfo');
+  info.style.display = 'flex';
+  info.className = 'file-info';
+  info.innerHTML = `
+    <div class="file-icon">${file.name.endsWith('.csv') ? '📄' : '📊'}</div>
+    <div class="file-details">
+      <div class="file-name">${file.name}</div>
+      <div class="file-meta">${rowCount.toLocaleString()} rows · ${columns.length} columns · ${kb} KB</div>
+    </div>
+    <button class="file-clear" onclick="clearFile()">✕ Clear</button>
+  `;
+}
+
+function clearFile() {
+  allData = []; columns = []; currentResults = [];
+  document.getElementById('fileInfo').style.display = 'none';
+  document.getElementById('uploadZone').style.display = 'block';
+  document.getElementById('dataSection').style.display = 'none';
+  document.getElementById('resultsSection').style.display = 'none';
+  fileInput.value = '';
+}
+
+function showStats(rows) {
+  const grid = document.getElementById('statsGrid');
+  const fraudCol = columns.find(c => /fraud|label|is_fraud/i.test(c));
+  const amtCol = columns.find(c => /amount|price|value/i.test(c));
+
+  let statsHTML = `
+    <div class="stat-card"><div class="stat-val">${rows.length.toLocaleString()}</div><div class="stat-lbl">Total Records</div></div>
+    <div class="stat-card"><div class="stat-val">${columns.length}</div><div class="stat-lbl">Columns</div></div>
+  `;
+
+  if (fraudCol) {
+    const fraudCount = rows.filter(r => String(r[fraudCol]).toLowerCase() === '1' || String(r[fraudCol]).toLowerCase() === 'true' || String(r[fraudCol]).toLowerCase() === 'yes').length;
+    const pct = ((fraudCount / rows.length) * 100).toFixed(1);
+    statsHTML += `<div class="stat-card"><div class="stat-val" style="color:var(--danger)">${fraudCount.toLocaleString()}</div><div class="stat-lbl">Fraudulent (${pct}%)</div></div>`;
+    statsHTML += `<div class="stat-card"><div class="stat-val" style="color:var(--success)">${(rows.length - fraudCount).toLocaleString()}</div><div class="stat-lbl">Legitimate</div></div>`;
+  }
+
+  if (amtCol) {
+    const vals = rows.map(r => parseFloat(r[amtCol])).filter(v => !isNaN(v));
+    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+    statsHTML += `<div class="stat-card"><div class="stat-val">$${avg.toFixed(0)}</div><div class="stat-lbl">Avg Amount</div></div>`;
+    statsHTML += `<div class="stat-card"><div class="stat-val">$${Math.max(...vals).toLocaleString()}</div><div class="stat-lbl">Max Amount</div></div>`;
+  }
+
+  grid.innerHTML = statsHTML;
+}
+
+function showPreview(rows) {
+  const preview = rows.slice(0, 8);
+  document.getElementById('previewMeta').textContent = `first 8 of ${rows.length.toLocaleString()} rows`;
+  document.getElementById('previewTable').innerHTML = buildTable(preview, columns);
+}
+
+function buildTable(rows, cols) {
+  if (!rows.length) return '<div class="empty"><div class="empty-icon">🔍</div><p>No results found</p></div>';
+  const fraudCol = cols.find(c => /fraud|label|is_fraud/i.test(c));
+
+  let html = '<table><thead><tr>';
+  cols.forEach(c => html += `<th title="${c}">${c}</th>`);
+  html += '</tr></thead><tbody>';
+
+  rows.forEach(row => {
+    html += '<tr>';
+    cols.forEach(c => {
+      let val = row[c] !== undefined ? row[c] : '';
+      if (c === fraudCol) {
+        const isFraud = String(val) === '1' || String(val).toLowerCase() === 'true';
+        val = isFraud
+          ? `<span class="badge-fraud">Fraud</span>`
+          : `<span class="badge-safe">Legit</span>`;
+      }
+      html += `<td title="${row[c]}">${val}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
+// ── SUGGESTIONS ──────────────────────────────────────────────
+function showSuggestions() {
+  const fraudCol = columns.find(c => /fraud|label|is_fraud/i.test(c));
+  const amtCol = columns.find(c => /amount|price|value/i.test(c));
+  const payCol = columns.find(c => /payment|method/i.test(c));
+  const dateCol = columns.find(c => /date|time/i.test(c));
+
+  const chips = [];
+  if (fraudCol) chips.push('Show all fraudulent transactions');
+  if (amtCol) chips.push('Top 10 highest amounts');
+  if (fraudCol && amtCol) chips.push('Fraud transactions above $1000');
+  if (payCol) chips.push('Count by payment method');
+  if (fraudCol) chips.push('Fraud rate summary');
+  if (dateCol) chips.push('Transactions by date');
+  chips.push('Show first 100 rows');
+  chips.push('Count all rows');
+
+  document.getElementById('suggestions').innerHTML = chips.slice(0, 6).map(q =>
+    `<button class="suggestion-chip" onclick="useChip(this)">${q}</button>`
+  ).join('');
+}
+
+function useChip(btn) {
+  document.getElementById('queryInput').value = btn.textContent;
+  runQuery();
+}
+
+// ── QUERY ENGINE ─────────────────────────────────────────────
+function runQuery() {
+  const q = document.getElementById('queryInput').value.trim();
+  if (!q || !allData.length) return;
+
+  const btn = document.getElementById('askBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Thinking…';
+
+  setTimeout(() => {
+    try {
+      const { results, sql, title } = interpretQuery(q, allData, columns);
+      currentResults = results;
+      currentSQL = sql;
+      currentPage = 1;
+
+      document.getElementById('resultsTitle').textContent = title;
+      document.getElementById('resultsMeta').textContent =
+        `${results.length.toLocaleString()} row${results.length !== 1 ? 's' : ''} returned`;
+      document.getElementById('sqlCode').innerHTML = highlightSQL(sql);
+      document.getElementById('sqlPanel').classList.remove('visible');
+      document.getElementById('resultsSection').style.display = 'block';
+
+      renderResultsPage();
+      addToHistory(q, results.length);
+    } catch (err) {
+      alert('Could not parse that query. Try rephrasing it.');
+    }
+    btn.disabled = false;
+    btn.innerHTML = 'Ask →';
+  }, 200);
+}
+
+function interpretQuery(q, data, cols) {
+  const ql = q.toLowerCase();
+  const TABLE = 'transactions';
+  const fraudCol = cols.find(c => /fraud|label|is_fraud/i.test(c)) || null;
+  const amtCol = cols.find(c => /amount|price|value/i.test(c)) || null;
+  const payCol = cols.find(c => /payment|method/i.test(c)) || null;
+  const dateCol = cols.find(c => /date|time/i.test(c)) || null;
+  const deviceCol = cols.find(c => /device/i.test(c)) || null;
+
+  // COUNT ALL
+  if (/^count\s*(all|rows|records|total)?$/.test(ql) || ql === 'how many rows' || ql === 'total rows') {
+    return {
+      results: [{ 'COUNT(*)': data.length }],
+      sql: `SELECT COUNT(*) FROM ${TABLE};`,
+      title: 'Row Count'
+    };
+  }
+
+  // FIRST N ROWS
+  const firstMatch = ql.match(/(?:show|display|get)?\s*first\s*(\d+)\s*rows?/);
+  if (firstMatch) {
+    const n = parseInt(firstMatch[1]);
+    return {
+      results: data.slice(0, n),
+      sql: `SELECT * FROM ${TABLE} LIMIT ${n};`,
+      title: `First ${n} Rows`
+    };
+  }
+
+  // FRAUD RATE SUMMARY
+  if (/fraud rate|fraud summary|summary/.test(ql) && fraudCol) {
+    const fraud = data.filter(r => isFraud(r[fraudCol])).length;
+    const legit = data.length - fraud;
+    return {
+      results: [
+        { Category: 'Fraudulent', Count: fraud, Percentage: ((fraud/data.length)*100).toFixed(2)+'%' },
+        { Category: 'Legitimate', Count: legit, Percentage: ((legit/data.length)*100).toFixed(2)+'%' },
+        { Category: 'Total', Count: data.length, Percentage: '100%' }
+      ],
+      sql: `SELECT\n  CASE WHEN ${fraudCol} = 1 THEN 'Fraudulent' ELSE 'Legitimate' END AS Category,\n  COUNT(*) AS Count,\n  ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM ${TABLE}), 2) AS Percentage\nFROM ${TABLE}\nGROUP BY ${fraudCol};`,
+      title: 'Fraud Rate Summary'
+    };
+  }
+
+  // ALL FRAUDULENT
+  if (/all fraud|show fraud|fraudulent transactions|fraud records|only fraud/.test(ql) && fraudCol) {
+    const results = data.filter(r => isFraud(r[fraudCol]));
+    return {
+      results,
+      sql: `SELECT * FROM ${TABLE}\nWHERE ${fraudCol} = 1;`,
+      title: 'All Fraudulent Transactions'
+    };
+  }
+
+  // ALL LEGITIMATE
+  if (/legitimate|legit|non.?fraud|not fraud/.test(ql) && fraudCol) {
+    const results = data.filter(r => !isFraud(r[fraudCol]));
+    return {
+      results,
+      sql: `SELECT * FROM ${TABLE}\nWHERE ${fraudCol} = 0;`,
+      title: 'All Legitimate Transactions'
+    };
+  }
+
+  // FRAUD + AMOUNT THRESHOLD
+  if (/fraud/.test(ql) && amtCol) {
+    const amtMatch = ql.match(/(\$?[\d,]+(\.\d+)?)/);
+    if (amtMatch) {
+      const threshold = parseFloat(amtMatch[1].replace(/[$,]/g, ''));
+      const op = /above|greater|more|over/.test(ql) ? '>' : /below|less|under/.test(ql) ? '<' : '>';
+      const results = data.filter(r =>
+        (fraudCol ? isFraud(r[fraudCol]) : true) &&
+        parseFloat(r[amtCol]) > (op === '>' ? threshold - 0.01 : -999999) &&
+        parseFloat(r[amtCol]) < (op === '<' ? threshold + 0.01 : 999999999)
+      );
+      return {
+        results,
+        sql: `SELECT * FROM ${TABLE}\nWHERE ${fraudCol ? fraudCol+' = 1\n  AND ' : ''}${amtCol} ${op} ${threshold};`,
+        title: `Fraud Transactions ${op === '>' ? 'Above' : 'Below'} $${threshold}`
+      };
+    }
+  }
+
+  // AMOUNT THRESHOLD (no fraud filter)
+  if (amtCol) {
+    const amtMatch = ql.match(/(\$?[\d,]+(\.\d+)?)/);
+    if (amtMatch && /above|greater|more|over|below|less|under/.test(ql)) {
+      const threshold = parseFloat(amtMatch[1].replace(/[$,]/g, ''));
+      const op = /above|greater|more|over/.test(ql) ? '>' : '<';
+      const results = data.filter(r => {
+        const v = parseFloat(r[amtCol]);
+        return op === '>' ? v > threshold : v < threshold;
+      });
+      return {
+        results,
+        sql: `SELECT * FROM ${TABLE}\nWHERE ${amtCol} ${op} ${threshold};`,
+        title: `Transactions ${op === '>' ? 'Above' : 'Below'} $${threshold}`
+      };
+    }
+  }
+
+  // TOP N BY AMOUNT
+  const topMatch = ql.match(/top\s*(\d+)/);
+  if (topMatch && amtCol) {
+    const n = parseInt(topMatch[1]);
+    const results = [...data].sort((a,b) => parseFloat(b[amtCol]||0) - parseFloat(a[amtCol]||0)).slice(0, n);
+    return {
+      results,
+      sql: `SELECT * FROM ${TABLE}\nORDER BY ${amtCol} DESC\nLIMIT ${n};`,
+      title: `Top ${n} Highest ${amtCol}`
+    };
+  }
+
+  // COUNT / GROUP BY PAYMENT METHOD
+  if (/payment method|by payment|payment type/.test(ql) && payCol) {
+    const groups = {};
+    data.forEach(r => {
+      const k = r[payCol] || 'Unknown';
+      groups[k] = (groups[k] || 0) + 1;
+    });
+    const results = Object.entries(groups)
+      .map(([k,v]) => ({ [payCol]: k, Count: v, Percentage: ((v/data.length)*100).toFixed(1)+'%' }))
+      .sort((a,b) => b.Count - a.Count);
+    return {
+      results,
+      sql: `SELECT ${payCol}, COUNT(*) AS Count,\n  ROUND(COUNT(*)*100.0/(SELECT COUNT(*) FROM ${TABLE}),1) AS Percentage\nFROM ${TABLE}\nGROUP BY ${payCol}\nORDER BY Count DESC;`,
+      title: 'Count by Payment Method'
+    };
+  }
+
+  // GROUP BY DEVICE
+  if (/device|by device/.test(ql) && deviceCol) {
+    const groups = {};
+    data.forEach(r => { const k = r[deviceCol]||'Unknown'; groups[k]=(groups[k]||0)+1; });
+    const results = Object.entries(groups).map(([k,v]) => ({ [deviceCol]: k, Count: v })).sort((a,b)=>b.Count-a.Count);
+    return {
+      results,
+      sql: `SELECT ${deviceCol}, COUNT(*) AS Count\nFROM ${TABLE}\nGROUP BY ${deviceCol}\nORDER BY Count DESC;`,
+      title: 'Count by Device Type'
+    };
+  }
+
+  // GROUP BY any column mentioned
+  const groupColMatch = cols.find(c => ql.includes(c.toLowerCase()) && /group|count by|per|each/.test(ql));
+  if (groupColMatch) {
+    const groups = {};
+    data.forEach(r => { const k = r[groupColMatch]||'Unknown'; groups[k]=(groups[k]||0)+1; });
+    const results = Object.entries(groups).map(([k,v]) => ({ [groupColMatch]: k, Count: v })).sort((a,b)=>b.Count-a.Count);
+    return {
+      results,
+      sql: `SELECT ${groupColMatch}, COUNT(*) AS Count\nFROM ${TABLE}\nGROUP BY ${groupColMatch}\nORDER BY Count DESC;`,
+      title: `Count by ${groupColMatch}`
+    };
+  }
+
+  // FILTER by column value mentioned
+  for (const col of cols) {
+    if (ql.includes(col.toLowerCase())) {
+      const colVals = [...new Set(data.map(r => String(r[col]).toLowerCase()))];
+      for (const val of colVals) {
+        if (val && ql.includes(val) && val.length > 2) {
+          const results = data.filter(r => String(r[col]).toLowerCase() === val);
+          return {
+            results,
+            sql: `SELECT * FROM ${TABLE}\nWHERE ${col} = '${val}';`,
+            title: `Rows where ${col} = '${val}'`
+          };
+        }
+      }
+    }
+  }
+
+  // SHOW ALL (fallback)
+  return {
+    results: data,
+    sql: `SELECT * FROM ${TABLE};`,
+    title: 'All Rows'
+  };
+}
+
+function isFraud(val) {
+  return val === 1 || val === '1' || String(val).toLowerCase() === 'true' || String(val).toLowerCase() === 'yes';
+}
+
+// ── RENDER RESULTS ───────────────────────────────────────────
+function renderResultsPage() {
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const pageData = currentResults.slice(start, start + PAGE_SIZE);
+  const resultCols = currentResults.length ? Object.keys(currentResults[0]) : [];
+
+  document.getElementById('resultsTable').innerHTML = buildTable(pageData, resultCols);
+  renderPagination();
+}
+
+function renderPagination() {
+  const total = Math.ceil(currentResults.length / PAGE_SIZE);
+  if (total <= 1) { document.getElementById('pagination').innerHTML = ''; return; }
+
+  let html = `<button class="page-btn" onclick="goPage(${currentPage-1})" ${currentPage===1?'disabled':''}>‹ Prev</button>`;
+  const range = [];
+  for (let i = Math.max(1, currentPage-2); i <= Math.min(total, currentPage+2); i++) range.push(i);
+  if (range[0] > 1) html += `<button class="page-btn" onclick="goPage(1)">1</button>${range[0]>2?'<span class="page-info">…</span>':''}`;
+  range.forEach(i => html += `<button class="page-btn ${i===currentPage?'active':''}" onclick="goPage(${i})">${i}</button>`);
+  if (range[range.length-1] < total) html += `${range[range.length-1]<total-1?'<span class="page-info">…</span>':''}<button class="page-btn" onclick="goPage(${total})">${total}</button>`;
+  html += `<button class="page-btn" onclick="goPage(${currentPage+1})" ${currentPage===total?'disabled':''}>Next ›</button>`;
+  html += `<span class="page-info">${currentPage} / ${total}</span>`;
+  document.getElementById('pagination').innerHTML = html;
+}
+
+function goPage(n) {
+  currentPage = n;
+  renderResultsPage();
+  document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ── SQL PANEL ────────────────────────────────────────────────
+function toggleSQL() {
+  const panel = document.getElementById('sqlPanel');
+  const btn = document.querySelector('.btn-sql');
+  panel.classList.toggle('visible');
+  btn.innerHTML = panel.classList.contains('visible') ? '<span>{ }</span> Hide SQL' : '<span>{ }</span> Show SQL';
+}
+
+function copySQL() {
+  navigator.clipboard.writeText(currentSQL).then(() => {
+    const btn = document.querySelector('.btn-copy');
+    btn.textContent = '✓ Copied'; setTimeout(() => btn.textContent = 'Copy', 1500);
+  });
+}
+
+function highlightSQL(sql) {
+  return sql
+    .replace(/\b(SELECT|FROM|WHERE|GROUP BY|ORDER BY|LIMIT|COUNT|ROUND|CASE|WHEN|THEN|ELSE|END|AS|AND|OR|NOT|IN|JOIN|ON|HAVING|DISTINCT|DESC|ASC|INSERT|UPDATE|DELETE|SET)\b/g, '<span class="kw">$1</span>')
+    .replace(/\b(COUNT|SUM|AVG|MAX|MIN|ROUND|COALESCE)\b/g, '<span class="fn">$1</span>')
+    .replace(/'([^']*)'/g, "<span class=\"str\">'$1'</span>")
+    .replace(/\b(\d+(\.\d+)?)\b/g, '<span class="num">$1</span>');
+}
+
+// ── EXPORT ───────────────────────────────────────────────────
+function exportCSV() {
+  if (!currentResults.length) return;
+  const cols = Object.keys(currentResults[0]);
+  const rows = [cols.join(','), ...currentResults.map(r => cols.map(c => `"${String(r[c]||'').replace(/"/g,'""')}"`).join(','))];
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'query_results.csv'; a.click();
+}
+
+// ── HISTORY ──────────────────────────────────────────────────
+function addToHistory(q, rowCount) {
+  queryHistory.unshift({ q, rowCount });
+  if (queryHistory.length > 8) queryHistory.pop();
+  const card = document.getElementById('historyCard');
+  const list = document.getElementById('historyList');
+  card.style.display = 'block';
+  list.innerHTML = queryHistory.map((h, i) => `
+    <div class="history-item" onclick="rerunHistory(${i})">
+      <span style="font-size:14px">🕐</span>
+      <span class="history-q">${h.q}</span>
+      <span class="history-rows">${h.rowCount} rows</span>
+      <span class="history-rerun">↑ Re-run</span>
+    </div>
+  `).join('');
+}
+
+function rerunHistory(i) {
+  document.getElementById('queryInput').value = queryHistory[i].q;
+  runQuery();
+}
+
+// Enter key to submit
+document.getElementById('queryInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runQuery(); }
+});
+</script>
+</body>
+</html>

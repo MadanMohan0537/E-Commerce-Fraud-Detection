@@ -32,6 +32,11 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/analyze")
+def analyze():
+    return render_template("analyze.html")
+
+
 @app.route("/predict", methods=["POST"])
 def predict():
     data = request.get_json()
