@@ -344,6 +344,8 @@ function loadData(rows, file) {
   if (!rows.length) { alert('No data found in file.'); return; }
   allData = rows;
   columns = Object.keys(rows[0]);
+  valueIndex = {}; // reset so it rebuilds for new file
+  buildValueIndex(rows, columns);
 
   showFileInfo(file, rows.length);
   showStats(rows);
@@ -489,6 +491,7 @@ function runQuery() {
       renderResultsPage();
       addToHistory(q, results.length);
     } catch (err) {
+      console.error(err);
       alert('Could not parse that query. Try rephrasing it.');
     }
     btn.disabled = false;
@@ -496,183 +499,429 @@ function runQuery() {
   }, 200);
 }
 
+// Build a reverse lookup: for every column, map each unique value (lowercase) → original value
+let valueIndex = {}; // { colName: { 'seattle': 'Seattle', ... } }
+function buildValueIndex(data, cols) {
+  valueIndex = {};
+  cols.forEach(col => {
+    const map = {};
+    data.forEach(r => {
+      const raw = String(r[col] || '');
+      if (raw && raw.length > 1 && raw.length < 60) map[raw.toLowerCase()] = raw;
+    });
+    valueIndex[col] = map;
+  });
+}
+
+// Scan query for any value that exists in the dataset across all columns
+function findValueMatches(ql, cols) {
+  // Tokenize query into words and 2-3 word phrases
+  const words = ql.replace(/[^\w\s]/g, ' ').split(/\s+/).filter(w => w.length > 1);
+  const phrases = [];
+  for (let i = 0; i < words.length; i++) {
+    phrases.push(words[i]);
+    if (i + 1 < words.length) phrases.push(words[i] + ' ' + words[i+1]);
+    if (i + 2 < words.length) phrases.push(words[i] + ' ' + words[i+1] + ' ' + words[i+2]);
+  }
+
+  const matches = []; // [{col, val, originalVal}]
+  const stopWords = new Set(['how','many','show','all','the','and','or','for','in','at','on','of','to','were','was','are','is','what','which','give','me','list','find','get','done','transactions','transaction','records','data','rows','with','where','that','have','from','by','per','each']);
+
+  phrases.forEach(phrase => {
+    if (stopWords.has(phrase)) return;
+    cols.forEach(col => {
+      if (valueIndex[col] && valueIndex[col][phrase]) {
+        matches.push({ col, val: phrase, originalVal: valueIndex[col][phrase] });
+      }
+    });
+  });
+
+  // Deduplicate — prefer longer matches
+  const seen = new Set();
+  return matches.filter(m => {
+    const key = m.col + '::' + m.val;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => b.val.length - a.val.length);
+}
+
+// Month name → number map
+const MONTH_MAP = {
+  january:1, jan:1, february:2, feb:2, march:3, mar:3,
+  april:4, apr:4, may:5, june:6, jun:6, july:7, jul:7,
+  august:8, aug:8, september:9, sep:9, sept:9, october:10, oct:10,
+  november:11, nov:11, december:12, dec:12
+};
+
+// Detect month name in query, return {monthNum, monthName} or null
+function detectMonth(ql) {
+  for (const [name, num] of Object.entries(MONTH_MAP)) {
+    if (new RegExp('\\b' + name + '\\b').test(ql)) return { monthNum: num, monthName: name.charAt(0).toUpperCase() + name.slice(1) };
+  }
+  return null;
+}
+
+// Detect year in query e.g. 2023
+function detectYear(ql) {
+  const m = ql.match(/\b(20\d{2})\b/);
+  return m ? parseInt(m[1]) : null;
+}
+
+// Parse a date string from a row and return a Date object
+function parseRowDate(val) {
+  if (!val) return null;
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// Find a column that looks like a "show me this column" request
+// e.g. "give me customer occupation" → finds 'CustomerOccupation' or 'Occupation'
+function findRequestedDisplayCol(ql, cols) {
+  // Match patterns like "give me X", "show X", "list X", "what is X", "customer X"
+  const normalised = ql.replace(/_/g,' ');
+  for (const col of cols) {
+    const colNorm = col.toLowerCase().replace(/_/g,' ');
+    // direct name match anywhere in query
+    if (normalised.includes(colNorm)) return col;
+  }
+  // Fuzzy: check each word in query against col keywords
+  const words = ql.split(/\s+/);
+  for (const col of cols) {
+    const colWords = col.toLowerCase().replace(/_/g,' ').split(/\s+/);
+    if (colWords.some(cw => cw.length > 3 && words.includes(cw))) return col;
+  }
+  return null;
+}
+
 function interpretQuery(q, data, cols) {
-  const ql = q.toLowerCase();
+  const ql = q.toLowerCase().trim();
   const TABLE = 'transactions';
-  const fraudCol = cols.find(c => /fraud|label|is_fraud/i.test(c)) || null;
-  const amtCol = cols.find(c => /amount|price|value/i.test(c)) || null;
-  const payCol = cols.find(c => /payment|method/i.test(c)) || null;
-  const dateCol = cols.find(c => /date|time/i.test(c)) || null;
+
+  // Intent flags
+  const isCountQ   = /\bhow many\b|\bcount\b|\btotal number\b|\bnumber of\b|\bhow much\b/.test(ql);
+  const isAvgQ     = /\baverage\b|\bavg\b|\bmean\b/.test(ql);
+  const isSumQ     = /\btotal\b|\bsum\b/.test(ql) && !/\btotal number\b|\btotal rows\b/.test(ql);
+  const isGroupQ   = /\bby\b|\bper\b|\beach\b|\bgroup\b|\bbreakdown\b/.test(ql);
+  const isFraudQ   = /\bfraud\b|\bfraudulent\b/.test(ql);
+  const isLegitQ   = /\blegit\b|\blegitimate\b|\bnon.?fraud\b|\bnot fraud\b/.test(ql);
+  const isShowColQ = /\bgive me\b|\bshow me\b|\blist\b|\bwhat (is|are)\b|\bdisplay\b/.test(ql);
+  const isSummaryQ = /\bsummary\b|\bfraud rate\b|\boverview\b/.test(ql);
+  const isMonthQ   = detectMonth(ql) !== null;
+  const isYearQ    = detectYear(ql) !== null;
+
+  // Detect columns
+  const fraudCol  = cols.find(c => /fraud|label|is_fraud/i.test(c)) || null;
+  const amtCol    = cols.find(c => /amount|price|value/i.test(c)) || null;
+  const payCol    = cols.find(c => /payment|method|pay_type/i.test(c)) || null;
+  const dateCol   = cols.find(c => /date|time|timestamp/i.test(c)) || null;
   const deviceCol = cols.find(c => /device/i.test(c)) || null;
+  const locCol    = cols.find(c => /location|city|region|state|country/i.test(c)) || null;
+  const typeCol   = cols.find(c => /\btype\b|transactiontype/i.test(c)) || null;
+  const occCol    = cols.find(c => /occupation|job|role|profession|position/i.test(c)) || null;
+  const ageCol    = cols.find(c => /\bage\b/i.test(c)) || null;
+  const genderCol = cols.find(c => /gender|sex/i.test(c)) || null;
+  const acctCol   = cols.find(c => /account|customer|user/i.test(c)) || null;
+  const ipCol     = cols.find(c => /ip/i.test(c)) || null;
+  const merchantCol = cols.find(c => /merchant/i.test(c)) || null;
 
-  // COUNT ALL
-  if (/^count\s*(all|rows|records|total)?$/.test(ql) || ql === 'how many rows' || ql === 'total rows') {
+  if (!Object.keys(valueIndex).length) buildValueIndex(data, cols);
+  const valueMatches = findValueMatches(ql, cols);
+  const monthInfo = detectMonth(ql);
+  const yearNum   = detectYear(ql);
+  const fraudIntent = isFraudQ ? 'fraud' : isLegitQ ? 'legit' : null;
+
+  // ── DATE FILTERS (month / year) ──────────────────────────
+  function buildDateFilters() {
+    const df = []; const dc = [];
+    if (dateCol && monthInfo) {
+      df.push(r => { const d = parseRowDate(r[dateCol]); return d && (d.getMonth()+1) === monthInfo.monthNum; });
+      dc.push(`MONTH(${dateCol}) = ${monthInfo.monthNum}`);
+    }
+    if (dateCol && yearNum) {
+      df.push(r => { const d = parseRowDate(r[dateCol]); return d && d.getFullYear() === yearNum; });
+      dc.push(`YEAR(${dateCol}) = ${yearNum}`);
+    }
+    return { df, dc };
+  }
+
+  // ── MASTER FILTER BUILDER ────────────────────────────────
+  function buildFilters() {
+    const filters = []; const sqlClauses = [];
+    if (fraudIntent === 'fraud' && fraudCol)  { filters.push(r => isFraud(r[fraudCol]));  sqlClauses.push(`${fraudCol} = 1`); }
+    if (fraudIntent === 'legit' && fraudCol)  { filters.push(r => !isFraud(r[fraudCol])); sqlClauses.push(`${fraudCol} = 0`); }
+    valueMatches.forEach(({ col, originalVal }) => {
+      filters.push(r => String(r[col]).toLowerCase() === originalVal.toLowerCase());
+      sqlClauses.push(`${col} = '${originalVal}'`);
+    });
+    const { df, dc } = buildDateFilters();
+    df.forEach(f => filters.push(f));
+    dc.forEach(c => sqlClauses.push(c));
+    return { filters, sqlClauses };
+  }
+
+  function applyFilters(rows, filters) {
+    return filters.length ? rows.filter(r => filters.every(f => f(r))) : rows;
+  }
+
+  function whereStr(clauses) {
+    return clauses.length ? `\nWHERE ${clauses.join('\n  AND ')}` : '';
+  }
+
+  // ── "GIVE ME OCCUPATION" / single column display ──────────
+  // e.g. "give me customer occupation", "show me occupation", "list all occupations"
+  const showColCandidates = [occCol, genderCol, ageCol, locCol, typeCol, payCol, deviceCol, merchantCol, acctCol].filter(Boolean);
+  const requestedCol = findRequestedDisplayCol(ql, showColCandidates.length ? showColCandidates : cols);
+
+  if (isShowColQ && requestedCol && !isCountQ && !isGroupQ) {
+    const { filters, sqlClauses } = buildFilters();
+    const filtered = applyFilters(data, filters);
+    // Return distinct values with count, or full rows if ambiguous
+    const isDistinctQ = /\bunique\b|\bdistinct\b|\bdifferent\b|\ball\s+(the\s+)?(unique|distinct)/.test(ql);
+    if (isDistinctQ || /occupation|job|role|category|type|gender|device|payment/i.test(requestedCol)) {
+      // Group by the column
+      const groups = {};
+      filtered.forEach(r => { const k = r[requestedCol] || 'Unknown'; groups[k] = (groups[k]||0)+1; });
+      const results = Object.entries(groups)
+        .map(([k,v]) => ({ [requestedCol]: k, Count: v, Percentage: ((v/filtered.length)*100).toFixed(1)+'%' }))
+        .sort((a,b) => b.Count - a.Count);
+      const w = whereStr(sqlClauses);
+      return {
+        results,
+        sql: `SELECT ${requestedCol}, COUNT(*) AS Count,\n  ROUND(COUNT(*)*100.0/(SELECT COUNT(*) FROM ${TABLE}),1) AS Percentage\nFROM ${TABLE}${w}\nGROUP BY ${requestedCol}\nORDER BY Count DESC;`,
+        title: `${requestedCol} breakdown`
+      };
+    }
+    // Otherwise show the column + key identifiers
+    const keyCols = [acctCol, dateCol, amtCol, requestedCol].filter(Boolean);
+    const results = applyFilters(data, filters).map(r => {
+      const row = {}; keyCols.forEach(c => row[c] = r[c]); return row;
+    });
+    const w = whereStr(sqlClauses);
     return {
-      results: [{ 'COUNT(*)': data.length }],
-      sql: `SELECT COUNT(*) FROM ${TABLE};`,
-      title: 'Row Count'
+      results,
+      sql: `SELECT ${keyCols.join(', ')}\nFROM ${TABLE}${w};`,
+      title: `${requestedCol} values`
     };
   }
 
-  // FIRST N ROWS
-  const firstMatch = ql.match(/(?:show|display|get)?\s*first\s*(\d+)\s*rows?/);
-  if (firstMatch) {
-    const n = parseInt(firstMatch[1]);
+  // ── MONTH / DATE queries ──────────────────────────────────
+  if (isMonthQ || isYearQ) {
+    const { filters, sqlClauses } = buildFilters();
+    const filtered = applyFilters(data, filters);
+    const w = whereStr(sqlClauses);
+    const label = [monthInfo?.monthName, yearNum].filter(Boolean).join(' ');
+
+    if (isCountQ) {
+      return {
+        results: [{ Count: filtered.length, Period: label, Description: sqlClauses.join(' AND ') }],
+        sql: `SELECT COUNT(*) AS Count\nFROM ${TABLE}${w};`,
+        title: `Transactions in ${label}: ${filtered.length.toLocaleString()}`
+      };
+    }
+    if (isGroupQ) {
+      const groupByCol = [payCol, locCol, typeCol, deviceCol, occCol].find(c => c && ql.includes(c.toLowerCase().replace(/_/g,' ')))
+        || [payCol, typeCol, locCol].find(Boolean);
+      if (groupByCol) {
+        const groups = {};
+        filtered.forEach(r => { const k = r[groupByCol]||'Unknown'; groups[k]=(groups[k]||0)+1; });
+        const results = Object.entries(groups).map(([k,v]) => ({ [groupByCol]: k, Count: v })).sort((a,b)=>b.Count-a.Count);
+        return {
+          results,
+          sql: `SELECT ${groupByCol}, COUNT(*) AS Count\nFROM ${TABLE}${w}\nGROUP BY ${groupByCol}\nORDER BY Count DESC;`,
+          title: `${groupByCol} breakdown — ${label}`
+        };
+      }
+    }
+    if (isAvgQ && amtCol) {
+      const vals = filtered.map(r => parseFloat(r[amtCol])).filter(v => !isNaN(v));
+      const avg = vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2) : 0;
+      return {
+        results: [{ Period: label, [`Average ${amtCol}`]: avg, RecordsUsed: vals.length }],
+        sql: `SELECT AVG(${amtCol}) AS "Average ${amtCol}"\nFROM ${TABLE}${w};`,
+        title: `Average ${amtCol} — ${label}`
+      };
+    }
+    if (isSumQ && amtCol) {
+      const vals = filtered.map(r => parseFloat(r[amtCol])).filter(v => !isNaN(v));
+      const sum = vals.reduce((a,b)=>a+b,0).toFixed(2);
+      return {
+        results: [{ Period: label, [`Total ${amtCol}`]: sum, RecordsUsed: vals.length }],
+        sql: `SELECT SUM(${amtCol}) AS "Total ${amtCol}"\nFROM ${TABLE}${w};`,
+        title: `Total ${amtCol} — ${label}`
+      };
+    }
+    // Default: show rows for that period
     return {
-      results: data.slice(0, n),
-      sql: `SELECT * FROM ${TABLE} LIMIT ${n};`,
-      title: `First ${n} Rows`
+      results: filtered,
+      sql: `SELECT * FROM ${TABLE}${w};`,
+      title: `Transactions in ${label} (${filtered.length.toLocaleString()} rows)`
     };
   }
 
-  // FRAUD RATE SUMMARY
-  if (/fraud rate|fraud summary|summary/.test(ql) && fraudCol) {
-    const fraud = data.filter(r => isFraud(r[fraudCol])).length;
-    const legit = data.length - fraud;
+  // ── COUNT queries ─────────────────────────────────────────
+  if (isCountQ || /^count\s*(all|rows|records|total)?$/.test(ql) || ql === 'how many rows' || ql === 'total rows') {
+    const { filters, sqlClauses } = buildFilters();
+    const filtered = applyFilters(data, filters);
+    const w = whereStr(sqlClauses);
+
+    // Group-by count
+    const allCatCols = [payCol, deviceCol, locCol, typeCol, occCol, genderCol, merchantCol].filter(Boolean);
+    const groupCol = isGroupQ
+      ? (allCatCols.find(c => ql.includes(c.toLowerCase().replace(/_/g,' '))) || (valueMatches.length===0 ? allCatCols[0] : null))
+      : null;
+
+    if (groupCol) {
+      const groups = {};
+      filtered.forEach(r => { const k = r[groupCol]||'Unknown'; groups[k]=(groups[k]||0)+1; });
+      const results = Object.entries(groups).map(([k,v]) => ({ [groupCol]: k, Count: v, Percentage: ((v/filtered.length)*100).toFixed(1)+'%' })).sort((a,b)=>b.Count-a.Count);
+      return { results, sql: `SELECT ${groupCol}, COUNT(*) AS Count\nFROM ${TABLE}${w}\nGROUP BY ${groupCol}\nORDER BY Count DESC;`, title: `Count by ${groupCol}` };
+    }
+
+    return {
+      results: [{ Count: filtered.length, Description: sqlClauses.length ? sqlClauses.join(' AND ') : 'All records' }],
+      sql: `SELECT COUNT(*) AS Count\nFROM ${TABLE}${w};`,
+      title: `Count: ${filtered.length.toLocaleString()} records`
+    };
+  }
+
+  // ── AVERAGE ───────────────────────────────────────────────
+  if (isAvgQ && amtCol) {
+    const { filters, sqlClauses } = buildFilters();
+    const filtered = applyFilters(data, filters);
+    const vals = filtered.map(r => parseFloat(r[amtCol])).filter(v => !isNaN(v));
+    const avg = vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2) : 0;
+    const w = whereStr(sqlClauses);
+    return { results: [{ Metric: `Average ${amtCol}`, Value: avg, Records: vals.length }], sql: `SELECT AVG(${amtCol}) AS "Average"\nFROM ${TABLE}${w};`, title: `Average ${amtCol}` };
+  }
+
+  // ── SUM ───────────────────────────────────────────────────
+  if (isSumQ && amtCol) {
+    const { filters, sqlClauses } = buildFilters();
+    const filtered = applyFilters(data, filters);
+    const vals = filtered.map(r => parseFloat(r[amtCol])).filter(v => !isNaN(v));
+    const sum = vals.reduce((a,b)=>a+b,0).toFixed(2);
+    const w = whereStr(sqlClauses);
+    return { results: [{ Metric: `Total ${amtCol}`, Value: sum, Records: vals.length }], sql: `SELECT SUM(${amtCol}) AS "Total"\nFROM ${TABLE}${w};`, title: `Total ${amtCol}` };
+  }
+
+  // ── TOP / BOTTOM N ────────────────────────────────────────
+  const topMatch = ql.match(/top\s*(\d+)/);
+  const botMatch = ql.match(/bottom\s*(\d+)|lowest\s*(\d+)/);
+  const nMatch = topMatch || botMatch;
+  if (nMatch) {
+    const n = parseInt(nMatch[1] || nMatch[2]);
+    const desc = !!topMatch;
+    const sortCol = amtCol || cols.find(c => !isNaN(parseFloat(data[0]?.[c])));
+    const { filters, sqlClauses } = buildFilters();
+    const filtered = applyFilters(data, filters);
+    const results = sortCol
+      ? [...filtered].sort((a,b)=>desc?parseFloat(b[sortCol]||0)-parseFloat(a[sortCol]||0):parseFloat(a[sortCol]||0)-parseFloat(b[sortCol]||0)).slice(0,n)
+      : filtered.slice(0,n);
+    const w = whereStr(sqlClauses);
+    return { results, sql: `SELECT * FROM ${TABLE}${w}\nORDER BY ${sortCol||'rowid'} ${desc?'DESC':'ASC'}\nLIMIT ${n};`, title: `${desc?'Top':'Bottom'} ${n}${sortCol?' by '+sortCol:''}` };
+  }
+
+  // ── FRAUD RATE SUMMARY ────────────────────────────────────
+  if (isSummaryQ && fraudCol) {
+    const { filters, sqlClauses } = buildFilters();
+    const subset = applyFilters(data, filters);
+    const fraud = subset.filter(r => isFraud(r[fraudCol])).length;
+    const legit = subset.length - fraud;
+    const w = whereStr(sqlClauses);
     return {
       results: [
-        { Category: 'Fraudulent', Count: fraud, Percentage: ((fraud/data.length)*100).toFixed(2)+'%' },
-        { Category: 'Legitimate', Count: legit, Percentage: ((legit/data.length)*100).toFixed(2)+'%' },
-        { Category: 'Total', Count: data.length, Percentage: '100%' }
+        { Category:'Fraudulent', Count:fraud, Percentage:subset.length?((fraud/subset.length)*100).toFixed(2)+'%':'0%' },
+        { Category:'Legitimate', Count:legit, Percentage:subset.length?((legit/subset.length)*100).toFixed(2)+'%':'0%' },
+        { Category:'Total', Count:subset.length, Percentage:'100%' }
       ],
-      sql: `SELECT\n  CASE WHEN ${fraudCol} = 1 THEN 'Fraudulent' ELSE 'Legitimate' END AS Category,\n  COUNT(*) AS Count,\n  ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM ${TABLE}), 2) AS Percentage\nFROM ${TABLE}\nGROUP BY ${fraudCol};`,
+      sql: `SELECT CASE WHEN ${fraudCol}=1 THEN 'Fraudulent' ELSE 'Legitimate' END AS Category, COUNT(*) AS Count\nFROM ${TABLE}${w}\nGROUP BY ${fraudCol};`,
       title: 'Fraud Rate Summary'
     };
   }
 
-  // ALL FRAUDULENT
-  if (/all fraud|show fraud|fraudulent transactions|fraud records|only fraud/.test(ql) && fraudCol) {
-    const results = data.filter(r => isFraud(r[fraudCol]));
-    return {
-      results,
-      sql: `SELECT * FROM ${TABLE}\nWHERE ${fraudCol} = 1;`,
-      title: 'All Fraudulent Transactions'
-    };
-  }
-
-  // ALL LEGITIMATE
-  if (/legitimate|legit|non.?fraud|not fraud/.test(ql) && fraudCol) {
-    const results = data.filter(r => !isFraud(r[fraudCol]));
-    return {
-      results,
-      sql: `SELECT * FROM ${TABLE}\nWHERE ${fraudCol} = 0;`,
-      title: 'All Legitimate Transactions'
-    };
-  }
-
-  // FRAUD + AMOUNT THRESHOLD
-  if (/fraud/.test(ql) && amtCol) {
-    const amtMatch = ql.match(/(\$?[\d,]+(\.\d+)?)/);
-    if (amtMatch) {
-      const threshold = parseFloat(amtMatch[1].replace(/[$,]/g, ''));
-      const op = /above|greater|more|over/.test(ql) ? '>' : /below|less|under/.test(ql) ? '<' : '>';
-      const results = data.filter(r =>
-        (fraudCol ? isFraud(r[fraudCol]) : true) &&
-        parseFloat(r[amtCol]) > (op === '>' ? threshold - 0.01 : -999999) &&
-        parseFloat(r[amtCol]) < (op === '<' ? threshold + 0.01 : 999999999)
-      );
-      return {
-        results,
-        sql: `SELECT * FROM ${TABLE}\nWHERE ${fraudCol ? fraudCol+' = 1\n  AND ' : ''}${amtCol} ${op} ${threshold};`,
-        title: `Fraud Transactions ${op === '>' ? 'Above' : 'Below'} $${threshold}`
-      };
+  // ── GROUP BY ──────────────────────────────────────────────
+  if (isGroupQ) {
+    const allCatCols = [payCol, deviceCol, locCol, typeCol, occCol, genderCol, merchantCol].filter(Boolean);
+    const mentionedGroupCol =
+      allCatCols.find(c => ql.includes(c.toLowerCase().replace(/_/g,' '))) ||
+      cols.find(c => { const cl=c.toLowerCase().replace(/_/g,' '); return ql.includes(cl) && c!==fraudCol && c!==amtCol && c!==dateCol; }) ||
+      allCatCols[0];
+    if (mentionedGroupCol) {
+      const { filters, sqlClauses } = buildFilters();
+      const filtered = applyFilters(data, filters);
+      const groups = {};
+      filtered.forEach(r => { const k=r[mentionedGroupCol]||'Unknown'; groups[k]=(groups[k]||0)+1; });
+      const results = Object.entries(groups).map(([k,v])=>({ [mentionedGroupCol]:k, Count:v, Percentage:((v/filtered.length)*100).toFixed(1)+'%' })).sort((a,b)=>b.Count-a.Count);
+      const w = whereStr(sqlClauses);
+      return { results, sql: `SELECT ${mentionedGroupCol}, COUNT(*) AS Count\nFROM ${TABLE}${w}\nGROUP BY ${mentionedGroupCol}\nORDER BY Count DESC;`, title: `Count by ${mentionedGroupCol}` };
     }
   }
 
-  // AMOUNT THRESHOLD (no fraud filter)
+  // ── AMOUNT THRESHOLD ──────────────────────────────────────
   if (amtCol) {
-    const amtMatch = ql.match(/(\$?[\d,]+(\.\d+)?)/);
-    if (amtMatch && /above|greater|more|over|below|less|under/.test(ql)) {
-      const threshold = parseFloat(amtMatch[1].replace(/[$,]/g, ''));
-      const op = /above|greater|more|over/.test(ql) ? '>' : '<';
-      const results = data.filter(r => {
-        const v = parseFloat(r[amtCol]);
-        return op === '>' ? v > threshold : v < threshold;
-      });
-      return {
-        results,
-        sql: `SELECT * FROM ${TABLE}\nWHERE ${amtCol} ${op} ${threshold};`,
-        title: `Transactions ${op === '>' ? 'Above' : 'Below'} $${threshold}`
-      };
+    const amtMatch = ql.match(/\$?([\d,]+(?:\.\d+)?)/);
+    if (amtMatch && /above|greater|more|over|below|less|under|equal/.test(ql)) {
+      const threshold = parseFloat(amtMatch[1].replace(/,/g,''));
+      const op = /above|greater|more|over/.test(ql) ? '>' : /below|less|under/.test(ql) ? '<' : '>=';
+      const { filters, sqlClauses } = buildFilters();
+      filters.push(r => { const v=parseFloat(r[amtCol]); return op==='>'?v>threshold:op==='<'?v<threshold:v>=threshold; });
+      sqlClauses.push(`${amtCol} ${op} ${threshold}`);
+      const results = applyFilters(data, filters);
+      return { results, sql: `SELECT * FROM ${TABLE}\nWHERE ${sqlClauses.join('\n  AND ')};`, title: `${amtCol} ${op} $${threshold}` };
     }
   }
 
-  // TOP N BY AMOUNT
-  const topMatch = ql.match(/top\s*(\d+)/);
-  if (topMatch && amtCol) {
-    const n = parseInt(topMatch[1]);
-    const results = [...data].sort((a,b) => parseFloat(b[amtCol]||0) - parseFloat(a[amtCol]||0)).slice(0, n);
+  // ── FIRST N ROWS ──────────────────────────────────────────
+  const firstMatch = ql.match(/(?:show|display|get|first)\s*(\d+)\s*rows?/);
+  if (firstMatch) {
+    const n = parseInt(firstMatch[1]);
+    const { filters, sqlClauses } = buildFilters();
+    const filtered = applyFilters(data, filters);
+    const w = whereStr(sqlClauses);
+    return { results: filtered.slice(0,n), sql: `SELECT * FROM ${TABLE}${w}\nLIMIT ${n};`, title: `First ${n} Rows` };
+  }
+
+  // ── VALUE FILTER ──────────────────────────────────────────
+  if (valueMatches.length > 0) {
+    const { filters, sqlClauses } = buildFilters();
+    const results = applyFilters(data, filters);
+    const w = whereStr(sqlClauses);
     return {
-      results,
-      sql: `SELECT * FROM ${TABLE}\nORDER BY ${amtCol} DESC\nLIMIT ${n};`,
-      title: `Top ${n} Highest ${amtCol}`
+      results: isCountQ ? [{ Count: results.length, Filter: sqlClauses.join(' AND ') }] : results,
+      sql: isCountQ ? `SELECT COUNT(*) AS Count\nFROM ${TABLE}${w};` : `SELECT * FROM ${TABLE}${w};`,
+      title: sqlClauses.map(c => c.replace(/.*=\s*'?/, '').replace(/'$/, '')).join(' + ')
     };
   }
 
-  // COUNT / GROUP BY PAYMENT METHOD
-  if (/payment method|by payment|payment type/.test(ql) && payCol) {
+  // ── FRAUD / LEGIT ONLY ────────────────────────────────────
+  if (fraudIntent && fraudCol) {
+    const results = fraudIntent==='fraud' ? data.filter(r=>isFraud(r[fraudCol])) : data.filter(r=>!isFraud(r[fraudCol]));
+    return { results, sql: `SELECT * FROM ${TABLE}\nWHERE ${fraudCol} = ${fraudIntent==='fraud'?1:0};`, title: fraudIntent==='fraud'?'All Fraudulent Transactions':'All Legitimate Transactions' };
+  }
+
+  // ── SHOW ALL ──────────────────────────────────────────────
+  if (/show all|all rows|all records|all transactions|display all/.test(ql)) {
+    return { results: data, sql: `SELECT * FROM ${TABLE};`, title: 'All Rows' };
+  }
+
+  // ── UNKNOWN ───────────────────────────────────────────────
+  // Try a last-resort: any column name in query → show that column's breakdown
+  const anyMentionedCol = cols.find(c => {
+    const cl = c.toLowerCase().replace(/_/g,' ');
+    return cl.split(' ').some(w => w.length > 3 && ql.includes(w));
+  });
+  if (anyMentionedCol) {
     const groups = {};
-    data.forEach(r => {
-      const k = r[payCol] || 'Unknown';
-      groups[k] = (groups[k] || 0) + 1;
-    });
-    const results = Object.entries(groups)
-      .map(([k,v]) => ({ [payCol]: k, Count: v, Percentage: ((v/data.length)*100).toFixed(1)+'%' }))
-      .sort((a,b) => b.Count - a.Count);
-    return {
-      results,
-      sql: `SELECT ${payCol}, COUNT(*) AS Count,\n  ROUND(COUNT(*)*100.0/(SELECT COUNT(*) FROM ${TABLE}),1) AS Percentage\nFROM ${TABLE}\nGROUP BY ${payCol}\nORDER BY Count DESC;`,
-      title: 'Count by Payment Method'
-    };
+    data.forEach(r => { const k=r[anyMentionedCol]||'Unknown'; groups[k]=(groups[k]||0)+1; });
+    const results = Object.entries(groups).map(([k,v])=>({ [anyMentionedCol]:k, Count:v })).sort((a,b)=>b.Count-a.Count);
+    return { results, sql: `SELECT ${anyMentionedCol}, COUNT(*) AS Count\nFROM ${TABLE}\nGROUP BY ${anyMentionedCol}\nORDER BY Count DESC;`, title: `${anyMentionedCol} breakdown` };
   }
 
-  // GROUP BY DEVICE
-  if (/device|by device/.test(ql) && deviceCol) {
-    const groups = {};
-    data.forEach(r => { const k = r[deviceCol]||'Unknown'; groups[k]=(groups[k]||0)+1; });
-    const results = Object.entries(groups).map(([k,v]) => ({ [deviceCol]: k, Count: v })).sort((a,b)=>b.Count-a.Count);
-    return {
-      results,
-      sql: `SELECT ${deviceCol}, COUNT(*) AS Count\nFROM ${TABLE}\nGROUP BY ${deviceCol}\nORDER BY Count DESC;`,
-      title: 'Count by Device Type'
-    };
-  }
-
-  // GROUP BY any column mentioned
-  const groupColMatch = cols.find(c => ql.includes(c.toLowerCase()) && /group|count by|per|each/.test(ql));
-  if (groupColMatch) {
-    const groups = {};
-    data.forEach(r => { const k = r[groupColMatch]||'Unknown'; groups[k]=(groups[k]||0)+1; });
-    const results = Object.entries(groups).map(([k,v]) => ({ [groupColMatch]: k, Count: v })).sort((a,b)=>b.Count-a.Count);
-    return {
-      results,
-      sql: `SELECT ${groupColMatch}, COUNT(*) AS Count\nFROM ${TABLE}\nGROUP BY ${groupColMatch}\nORDER BY Count DESC;`,
-      title: `Count by ${groupColMatch}`
-    };
-  }
-
-  // FILTER by column value mentioned
-  for (const col of cols) {
-    if (ql.includes(col.toLowerCase())) {
-      const colVals = [...new Set(data.map(r => String(r[col]).toLowerCase()))];
-      for (const val of colVals) {
-        if (val && ql.includes(val) && val.length > 2) {
-          const results = data.filter(r => String(r[col]).toLowerCase() === val);
-          return {
-            results,
-            sql: `SELECT * FROM ${TABLE}\nWHERE ${col} = '${val}';`,
-            title: `Rows where ${col} = '${val}'`
-          };
-        }
-      }
-    }
-  }
-
-  // SHOW ALL (fallback)
   return {
-    results: data,
-    sql: `SELECT * FROM ${TABLE};`,
-    title: 'All Rows'
+    results: [],
+    sql: `-- Could not parse: "${q}"\n-- Examples:\n--   "How many fraud transactions in March"\n--   "Give me customer occupation"\n--   "Top 10 highest amounts"\n--   "Count by payment method"\n--   "Number of transactions in 2023"`,
+    title: '⚠ Query not understood — see SQL panel for examples'
   };
 }
 
