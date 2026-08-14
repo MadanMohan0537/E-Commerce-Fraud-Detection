@@ -436,39 +436,39 @@
     FraudShield
   </div>
   <div style="display:flex;gap:10px;align-items:center">
-    <a href="/analyze" style="font-size:13px;color:var(--muted);text-decoration:none;padding:6px 14px;border-radius:20px;border:1px solid var(--border);">Data Analyzer →</a>
-    <span class="nav-badge">ML-Powered · Real-time</span>
+    <a href="#transaction-analyzer" style="font-size:13px;color:var(--muted);text-decoration:none;padding:6px 14px;border-radius:20px;border:1px solid var(--border);">Transaction Analyzer ↓</a>
+    <span class="nav-badge">Cloudflare Worker · Real-time</span>
   </div>
 </nav>
 
 <div class="hero">
   <div class="hero-badge">
-    <span>●</span> XGBoost · SMOTE · Feature Engineering
+    <span>●</span> Transparent rules · Edge runtime · No paid API
   </div>
   <h1>E-Commerce Fraud<br>Detection Engine</h1>
-  <p>Enter transaction details below and get an instant fraud risk assessment powered by machine learning.</p>
+  <p>Enter transaction details below and get an instant, explainable prototype risk assessment at the edge.</p>
 
   <div class="stats-bar">
     <div class="stat">
-      <div class="stat-value">98.2%</div>
-      <div class="stat-label">Model Accuracy</div>
+      <div class="stat-value">$0</div>
+      <div class="stat-label">Model API Cost</div>
     </div>
     <div class="stat">
       <div class="stat-value">10</div>
       <div class="stat-label">Risk Features</div>
     </div>
     <div class="stat">
-      <div class="stat-value">&lt;50ms</div>
-      <div class="stat-label">Inference Time</div>
+      <div class="stat-value">Edge</div>
+      <div class="stat-label">Runtime</div>
     </div>
     <div class="stat">
-      <div class="stat-value">XGBoost</div>
-      <div class="stat-label">Algorithm</div>
+      <div class="stat-value">Rules</div>
+      <div class="stat-label">Prototype Engine</div>
     </div>
   </div>
 </div>
 
-<div class="main">
+<div class="main" id="transaction-analyzer">
 
   <!-- INPUT FORM -->
   <div class="card">
@@ -579,7 +579,7 @@
 </div>
 
 <footer>
-  FraudShield · E-Commerce Fraud Detection · Powered by XGBoost &amp; Machine Learning
+  FraudShield · Explainable risk prototype · Not for production transaction decisions
 </footer>
 
 <script>
@@ -613,9 +613,10 @@
         body: JSON.stringify(payload),
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Prediction request failed');
       renderResult(data);
     } catch (err) {
-      alert('Error connecting to server. Make sure the Flask app is running.');
+      alert(err instanceof Error ? err.message : 'Unable to analyze this transaction.');
     } finally {
       btn.disabled = false;
       btn.innerHTML = 'Analyze Transaction';
@@ -663,9 +664,9 @@
       <div class="verdict-card ${isFraud ? 'fraud' : 'safe'}">
         <div class="verdict-icon">${isFraud ? '🚨' : '✅'}</div>
         <div class="verdict-label" style="color: ${isFraud ? '#ff4d6d' : '#2ecc71'}">
-          ${isFraud ? 'Fraudulent Transaction' : 'Legitimate Transaction'}
+          ${isFraud ? 'High-Risk Transaction' : 'Lower-Risk Transaction'}
         </div>
-        <div class="verdict-sub">Based on ${data.mode === 'model' ? 'trained XGBoost model' : 'rule-based demo heuristics'}</div>
+        <div class="verdict-sub">Based on transparent rule-based prototype heuristics</div>
         <span class="confidence-badge" style="background:${confidenceBg}; color:${confidenceColor}">
           ${data.confidence}
         </span>

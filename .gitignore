@@ -7,4 +7,5 @@ env/
 .venv/
 *.csv
 model/fraud_model.pkl
-.vercel/
+.wrangler/
+.dev.vars
