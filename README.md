@@ -17,14 +17,14 @@
 
 **FraudShield** is an edge-deployed e-commerce transaction risk evaluation system. It allows online retailers and merchant platforms to evaluate transaction risk signals with sub-millisecond latency.
 
-When a checkout transaction occurs, the Cloudflare Worker analyzes high-risk velocity patterns, geo-distance anomalies, new account velocity, international card mismatches, and failed attempt thresholds, returning a transparent composite risk score with explainable risk factors.
+When a checkout transaction occurs, the Cloudflare Worker analyzes high-risk velocity patterns, home-to-transaction location anomalies, new account velocity, international card mismatches, and failed attempt thresholds, returning a transparent composite risk score with explainable risk factors.
 
 ---
 
 ## ✨ Key Features
 
 - **⚡ Sub-Millisecond Edge Evaluation:** Deployed globally on Cloudflare Workers with zero cold starts.
-- **🔍 Explainable Risk Signals:** Rather than a black-box verdict, every score returns the specific contributing risk factors (e.g. `High transaction amount`, `Account age < 7 days`, `Rapid retry velocity`, `Geo-distance anomaly`).
+- **🔍 Explainable Risk Signals:** Rather than a black-box verdict, every score returns the specific contributing risk factors (e.g. `High transaction amount`, `Account age < 7 days`, `Rapid retry velocity`, `Cross-state or long-distance anomaly`).
 - **🎛️ Interactive Fraud Inspector UI:** Single-page frontend allowing risk analysts to simulate scenarios, test risk thresholds, and inspect real-time response payloads.
 - **🤖 Offline Machine Learning Pipeline:** Python-based ML training suite (`training/train_model.py`) featuring XGBoost and scikit-learn models for historical fraud pattern classification.
 
@@ -87,7 +87,12 @@ curl -X POST http://localhost:8787/predict \
     "transaction_amount": 6000,
     "account_age_days": 5,
     "num_transactions_today": 8,
-    "distance_from_home_km": 900,
+    "home_state": "CA",
+    "home_city": "Los Angeles",
+    "transaction_state": "NY",
+    "transaction_city": "New York City",
+    "distance_from_home_miles": 2445,
+    "transaction_date": "2026-08-19",
     "hour_of_day": 2,
     "is_international": 1,
     "failed_attempts": 3
@@ -103,7 +108,7 @@ curl -X POST http://localhost:8787/predict \
   "factors": [
     "High transaction amount relative to account history",
     "New account created within 7 days",
-    "Geo-distance anomaly (>500km from primary billing)",
+    "Cross-state or long-distance anomaly (>500km from primary billing)",
     "Abnormal transaction hour (02:00 AM)",
     "Multiple failed checkout attempts"
   ]
