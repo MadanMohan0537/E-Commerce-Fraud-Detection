@@ -496,17 +496,73 @@
         </div>
 
         <div class="form-group">
-          <label>Distance from Home (km)</label>
-          <input type="number" id="distance_from_home_km" value="5" min="0" />
+          <label>Home State</label>
+          <select id="home_state"><option value="">Select state</option>
+            <option value="CA">California</option><option value="NY">New York</option>
+            <option value="TX">Texas</option><option value="FL">Florida</option>
+            <option value="IL">Illinois</option><option value="WA">Washington</option>
+            <option value="MA">Massachusetts</option><option value="GA">Georgia</option>
+            <option value="AZ">Arizona</option><option value="CO">Colorado</option></select>
         </div>
 
         <div class="form-group">
-          <label>Hour of Day (0–23)</label>
-          <div class="range-row">
-            <input type="range" id="hour_of_day" min="0" max="23" value="14"
-              oninput="document.getElementById('hour_val').textContent=this.value" />
-            <span class="range-val" id="hour_val">14</span>
-          </div>
+          <label>Home City</label>
+          <select id="home_city" disabled><option value="">Select a state first</option></select>
+        </div>
+
+        <div class="form-group">
+          <label>Transaction State</label>
+          <select id="transaction_state"><option value="">Select state</option>
+            <option value="CA">California</option><option value="NY">New York</option>
+            <option value="TX">Texas</option><option value="FL">Florida</option>
+            <option value="IL">Illinois</option><option value="WA">Washington</option>
+            <option value="MA">Massachusetts</option><option value="GA">Georgia</option>
+            <option value="AZ">Arizona</option><option value="CO">Colorado</option></select>
+        </div>
+
+        <div class="form-group">
+          <label>Transaction City</label>
+          <select id="transaction_city" disabled><option value="">Select a state first</option></select>
+        </div>
+
+        <div class="form-group">
+          <label>Distance from Home (miles)</label>
+          <input type="number" id="distance_from_home_miles" value="3" min="0" max="31000" step="0.1" />
+        </div>
+
+        <div class="form-group">
+          <label>Transaction Date</label>
+          <input type="date" id="transaction_date" />
+        </div>
+
+        <div class="form-group">
+          <label>Transaction Hour (1–24)</label>
+          <select id="hour_of_day">
+            <option value="1">01:00</option>
+            <option value="2">02:00</option>
+            <option value="3">03:00</option>
+            <option value="4">04:00</option>
+            <option value="5">05:00</option>
+            <option value="6">06:00</option>
+            <option value="7">07:00</option>
+            <option value="8">08:00</option>
+            <option value="9">09:00</option>
+            <option value="10">10:00</option>
+            <option value="11">11:00</option>
+            <option value="12">12:00</option>
+            <option value="13">13:00</option>
+            <option value="14" selected>14:00</option>
+            <option value="15">15:00</option>
+            <option value="16">16:00</option>
+            <option value="17">17:00</option>
+            <option value="18">18:00</option>
+            <option value="19">19:00</option>
+            <option value="20">20:00</option>
+            <option value="21">21:00</option>
+            <option value="22">22:00</option>
+            <option value="23">23:00</option>
+            <option value="24">24:00</option>
+          </select>
         </div>
 
         <div class="form-group">
@@ -586,6 +642,35 @@
   const form = document.getElementById('fraudForm');
   const resultPanel = document.getElementById('resultPanel');
 
+  const citiesByState = {
+    CA: ['Los Angeles', 'San Diego', 'San Francisco', 'San Jose', 'Sacramento'],
+    NY: ['New York City', 'Buffalo', 'Rochester', 'Albany', 'Syracuse'],
+    TX: ['Houston', 'Dallas', 'Austin', 'San Antonio', 'Fort Worth'],
+    FL: ['Miami', 'Orlando', 'Tampa', 'Jacksonville', 'Tallahassee'],
+    IL: ['Chicago', 'Springfield', 'Naperville', 'Rockford', 'Peoria'],
+    WA: ['Seattle', 'Spokane', 'Tacoma', 'Bellevue', 'Olympia'],
+    MA: ['Boston', 'Cambridge', 'Worcester', 'Springfield', 'Lowell'],
+    GA: ['Atlanta', 'Savannah', 'Augusta', 'Athens', 'Macon'],
+    AZ: ['Phoenix', 'Tucson', 'Mesa', 'Scottsdale', 'Tempe'],
+    CO: ['Denver', 'Colorado Springs', 'Aurora', 'Boulder', 'Fort Collins'],
+  };
+
+  function connectCitySelector(stateId, cityId) {
+    const state = document.getElementById(stateId);
+    const city = document.getElementById(cityId);
+    state.addEventListener('change', () => {
+      const cities = citiesByState[state.value] || [];
+      city.innerHTML = cities.length
+        ? '<option value="">Select city</option>' + cities.map(name => `<option value="${name}">${name}</option>`).join('')
+        : '<option value="">Select a state first</option>';
+      city.disabled = !cities.length;
+    });
+  }
+
+  connectCitySelector('home_state', 'home_city');
+  connectCitySelector('transaction_state', 'transaction_city');
+  document.getElementById('transaction_date').valueAsDate = new Date();
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -597,7 +682,12 @@
       transaction_amount: document.getElementById('transaction_amount').value,
       account_age_days: document.getElementById('account_age_days').value,
       num_transactions_today: document.getElementById('num_transactions_today').value,
-      distance_from_home_km: document.getElementById('distance_from_home_km').value,
+      home_state: document.getElementById('home_state').value,
+      home_city: document.getElementById('home_city').value,
+      transaction_state: document.getElementById('transaction_state').value,
+      transaction_city: document.getElementById('transaction_city').value,
+      distance_from_home_miles: document.getElementById('distance_from_home_miles').value,
+      transaction_date: document.getElementById('transaction_date').value,
       hour_of_day: document.getElementById('hour_of_day').value,
       is_weekend: document.getElementById('is_weekend').checked ? 1 : 0,
       is_international: document.getElementById('is_international').checked ? 1 : 0,
