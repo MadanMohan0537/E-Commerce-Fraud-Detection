@@ -6,9 +6,14 @@
 
 <p align="center">
   <a href="#license"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License"></a>
-  <a href="https://workers.cloudflare.com"><img src="https://img.shields.io/badge/Deployment-Cloudflare%20Workers-f38020?style=flat-square&logo=cloudflare" alt="Cloudflare Workers"></a>
+  <a href="https://e-commerce-fraud-detection.madanmohanlearning.workers.dev/"><img src="https://img.shields.io/badge/Live%20Demo-Cloudflare%20Workers-f38020?style=flat-square&logo=cloudflare" alt="Live Cloudflare Workers deployment"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-18%2B-brightgreen?style=flat-square&logo=node.js" alt="Node.js"></a>
   <a href="https://scikit-learn.org"><img src="https://img.shields.io/badge/ML-XGBoost%20%2F%20Scikit--Learn-f7931e?style=flat-square" alt="Machine Learning"></a>
+</p>
+
+<p align="center">
+  <strong>Live application:</strong>
+  <a href="https://e-commerce-fraud-detection.madanmohanlearning.workers.dev/">https://e-commerce-fraud-detection.madanmohanlearning.workers.dev/</a>
 </p>
 
 ---
@@ -65,10 +70,15 @@ npm run dev
 
 Open [http://localhost:8787](http://localhost:8787) in your browser.
 
-### Deployment
+### Live Deployment
+
+The production application is deployed on Cloudflare Workers:
+
+**[Open FraudShield Live](https://e-commerce-fraud-detection.madanmohanlearning.workers.dev/)**
+
+To deploy your own instance:
 
 ```bash
-# Deploy to Cloudflare Workers
 npm run deploy
 ```
 
