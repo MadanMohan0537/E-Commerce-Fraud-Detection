@@ -2,7 +2,7 @@ const DEFAULTS = {
   transaction_amount: 0,
   account_age_days: 365,
   num_transactions_today: 1,
-  distance_from_home_km: 0,
+  distance_from_home_miles: 0,
   hour_of_day: 12,
   is_weekend: 0,
   is_international: 0,
@@ -15,7 +15,7 @@ const LIMITS = {
   transaction_amount: [0, 10_000_000],
   account_age_days: [0, 36_500],
   num_transactions_today: [0, 10_000],
-  distance_from_home_km: [0, 50_000],
+  distance_from_home_miles: [0, 31_000],
   hour_of_day: [0, 23],
   is_weekend: [0, 1],
   is_international: [0, 1],
@@ -44,12 +44,22 @@ function parseFeatures(body) {
 
   const result = {}
   for (const [name, fallback] of Object.entries(DEFAULTS)) {
-    const raw = body[name] ?? fallback
+    const raw = name === 'distance_from_home_miles'
+      ? (body.distance_from_home_miles ?? (body.distance_from_home_km != null
+          ? Number(body.distance_from_home_km) / 1.609344
+          : fallback))
+      : (body[name] ?? fallback)
     const value = Number(raw)
     const [min, max] = LIMITS[name]
     if (!Number.isFinite(value) || value < min || value > max) {
       throw new Error(`${name} must be a number between ${min} and ${max}.`)
     }
+    result[name] = value
+  }
+  const textFields = ['home_state', 'home_city', 'transaction_state', 'transaction_city', 'transaction_date']
+  for (const name of textFields) {
+    const value = body[name] == null ? '' : String(body[name]).trim()
+    if (value.length > 100) throw new Error(`${name} must be 100 characters or fewer.`)
     result[name] = value
   }
   return result
@@ -61,7 +71,8 @@ function heuristicScore(f) {
   else if (f.transaction_amount > 1000) score += 0.15
   if (f.account_age_days < 30) score += 0.2
   if (f.num_transactions_today > 5) score += 0.15
-  if (f.distance_from_home_km > 500) score += 0.2
+  if (f.distance_from_home_miles > 310.7) score += 0.2
+  if (f.home_state && f.transaction_state && f.home_state !== f.transaction_state) score += 0.1
   if (f.hour_of_day < 5 || f.hour_of_day > 22) score += 0.15
   if (f.is_international === 1) score += 0.1
   if (f.failed_attempts > 1) score += 0.2
@@ -82,7 +93,10 @@ function riskFactors(f) {
   else if (f.transaction_amount > 1000) factors.push({ factor: 'Elevated transaction amount', severity: 'medium' })
   if (f.account_age_days < 30) factors.push({ factor: 'New account (< 30 days)', severity: 'high' })
   if (f.num_transactions_today > 5) factors.push({ factor: 'Multiple transactions today', severity: 'medium' })
-  if (f.distance_from_home_km > 500) factors.push({ factor: 'Transaction far from home', severity: 'high' })
+  if (f.distance_from_home_miles > 310.7) factors.push({ factor: 'Transaction more than 310 miles from home', severity: 'high' })
+  if (f.home_state && f.transaction_state && f.home_state !== f.transaction_state) {
+    factors.push({ factor: `Transaction state differs from home state (${f.home_state} → ${f.transaction_state})`, severity: 'medium' })
+  }
   if (f.hour_of_day < 5 || f.hour_of_day > 22) factors.push({ factor: 'Unusual transaction time', severity: 'medium' })
   if (f.is_international === 1) factors.push({ factor: 'International transaction', severity: 'low' })
   if (f.failed_attempts > 1) factors.push({ factor: 'Previous failed attempts', severity: 'high' })
