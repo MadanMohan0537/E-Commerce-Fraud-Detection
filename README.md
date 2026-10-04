@@ -1,143 +1,86 @@
-# 🛡️ FraudShield — E-Commerce Fraud Risk Detection Engine
+# FraudShield
 
-<p align="center">
-  <strong>A Cloudflare-native fraud scoring engine combining edge computing with transparent rule-based risk evaluation and ML pipelines.</strong>
-</p>
+An explainable e-commerce risk-scoring prototype with a Cloudflare Worker API and an interactive inspection UI.
 
-<p align="center">
-  <a href="#license"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License"></a>
-  <a href="https://e-commerce-fraud-detection.madanmohanlearning.workers.dev/"><img src="https://img.shields.io/badge/Live%20Demo-Cloudflare%20Workers-f38020?style=flat-square&logo=cloudflare" alt="Live Cloudflare Workers deployment"></a>
-  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-18%2B-brightgreen?style=flat-square&logo=node.js" alt="Node.js"></a>
-  <a href="https://scikit-learn.org"><img src="https://img.shields.io/badge/ML-XGBoost%20%2F%20Scikit--Learn-f7931e?style=flat-square" alt="Machine Learning"></a>
-</p>
+**Current behavior:** the online endpoint uses deterministic rules. The separate Python training script is an offline experiment; its model is not served by the Worker. Scores are heuristic values, not calibrated fraud probabilities.
 
-<p align="center">
-  <strong>Live application:</strong>
-  <a href="https://e-commerce-fraud-detection.madanmohanlearning.workers.dev/">https://e-commerce-fraud-detection.madanmohanlearning.workers.dev/</a>
-</p>
+## What you can try
 
----
+- Submit transaction attributes and inspect contributing risk factors.
+- Compare high-amount, new-account, unusual-hour, distance and failed-attempt scenarios.
+- Run the Worker locally or deploy it to your own Cloudflare account.
+- Explore supervised classification separately with the Python training script.
 
-## 📌 Overview
+[Demo application](https://e-commerce-fraud-detection.madanmohanlearning.workers.dev/)
 
-**FraudShield** is an edge-deployed e-commerce transaction risk evaluation system. It allows online retailers and merchant platforms to evaluate transaction risk signals with sub-millisecond latency.
+## Quick start
 
-When a checkout transaction occurs, the Cloudflare Worker analyzes high-risk velocity patterns, home-to-transaction location anomalies, new account velocity, international card mismatches, and failed attempt thresholds, returning a transparent composite risk score with explainable risk factors.
-
----
-
-## ✨ Key Features
-
-- **⚡ Sub-Millisecond Edge Evaluation:** Deployed globally on Cloudflare Workers with zero cold starts.
-- **🔍 Explainable Risk Signals:** Rather than a black-box verdict, every score returns the specific contributing risk factors (e.g. `High transaction amount`, `Account age < 7 days`, `Rapid retry velocity`, `Cross-state or long-distance anomaly`).
-- **🎛️ Interactive Fraud Inspector UI:** Single-page frontend allowing risk analysts to simulate scenarios, test risk thresholds, and inspect real-time response payloads.
-- **🤖 Offline Machine Learning Pipeline:** Python-based ML training suite (`training/train_model.py`) featuring XGBoost and scikit-learn models for historical fraud pattern classification.
-
----
-
-## 🏗️ Architecture
-
-```mermaid
-flowchart LR
-    A[Checkout Payload] --> B[Cloudflare Worker Edge API :8787]
-    B --> C{Rule Engine & Risk Evaluator}
-    C -->|Velocity & Geo Signals| D[Risk Probability & Decision]
-    D --> E[Explainable Factor Breakdown]
-    E --> F[Merchant Response: Approve / Review / Decline]
-```
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-- **Node.js:** v18+
-- **Wrangler CLI:** `npm install -g wrangler`
-
-### Local Development
+Use a current Node.js version compatible with Wrangler 4 and npm.
 
 ```bash
-# Clone the repository
 git clone https://github.com/MadanMohan0537/E-Commerce-Fraud-Detection.git
 cd E-Commerce-Fraud-Detection
-
-# Install dependencies
 npm install
-
-# Start local worker emulator & UI
+npm run check
 npm run dev
 ```
 
-Open [http://localhost:8787](http://localhost:8787) in your browser.
+Open the URL printed by Wrangler, normally http://localhost:8787. The scripts invoke Wrangler 4.120.0 through `npx`; a global CLI installation is not required.
 
-### Live Deployment
+## API
 
-The production application is deployed on Cloudflare Workers:
+### POST /predict
 
-**[Open FraudShield Live](https://e-commerce-fraud-detection.madanmohanlearning.workers.dev/)**
-
-To deploy your own instance:
+Send a JSON object with numeric transaction features. Omitted numeric fields use defaults defined in [worker/index.js](worker/index.js); invalid ranges return a validation error.
 
 ```bash
-npm run deploy
+curl http://localhost:8787/predict \
+  -H 'Content-Type: application/json' \
+  -d '{"transaction_amount":6000,"account_age_days":5,"num_transactions_today":8,"distance_from_home_miles":2445,"hour_of_day":2,"is_international":1,"failed_attempts":3}'
 ```
 
----
+The response includes:
 
-## 📡 API Reference
+| Field | Meaning |
+| --- | --- |
+| `fraud` | Whether the heuristic score exceeds 0.5 |
+| `probability` | Rounded heuristic score, capped at 0.99; not a calibrated probability |
+| `confidence` | Risk label derived from score thresholds |
+| `risk_factors` | Objects containing `factor` and `severity` |
+| `mode` | `rules` |
+| `disclaimer` | Prototype decision-aid boundary |
 
-### `POST /predict`
+The example above activates several rules. Inspect the actual response rather than relying on an illustrative risk score. The service does not maintain cross-request transaction history; velocity fields are supplied by the caller.
 
-Evaluate transaction risk attributes:
+## Offline model experiment
 
 ```bash
-curl -X POST http://localhost:8787/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "transaction_amount": 6000,
-    "account_age_days": 5,
-    "num_transactions_today": 8,
-    "home_state": "CA",
-    "home_city": "Los Angeles",
-    "transaction_state": "NY",
-    "transaction_city": "New York City",
-    "distance_from_home_miles": 2445,
-    "transaction_date": "2026-08-19",
-    "hour_of_day": 2,
-    "is_international": 1,
-    "failed_attempts": 3
-  }'
-```
-
-**Example Response:**
-```json
-{
-  "risk_score": 0.82,
-  "verdict": "REVIEW",
-  "fraud": true,
-  "factors": [
-    "High transaction amount relative to account history",
-    "New account created within 7 days",
-    "Cross-state or long-distance anomaly (>500km from primary billing)",
-    "Abnormal transaction hour (02:00 AM)",
-    "Multiple failed checkout attempts"
-  ]
-}
-```
-
----
-
-## 🔬 Offline ML Experimentation
-
-To experiment with offline supervised fraud classification:
-
-```bash
-pip install -r requirements-training.txt
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-training.txt
 python training/train_model.py
 ```
 
----
+On Windows, activate with `.venv\Scripts\activate`. Review [the training script](training/train_model.py) before running it for its input and output assumptions. The online rule engine and offline model must be evaluated separately.
 
-## 📄 License
+## Repository map
 
-MIT License — see [LICENSE](LICENSE) for details.
+| Location | Purpose |
+| --- | --- |
+| [worker/index.js](worker/index.js) | Feature validation, risk rules and HTTP routes |
+| [public](public/) | Browser application |
+| [training/train_model.py](training/train_model.py) | Offline classification experiment |
+| [requirements-training.txt](requirements-training.txt) | Python training dependencies |
+| [wrangler.jsonc](wrangler.jsonc) | Worker deployment configuration |
+
+## Validation and deployment
+
+`npm run check` performs a JavaScript syntax check. It does not evaluate fraud detection accuracy. For your own deployment, review `wrangler.jsonc`, authenticate to Cloudflare and run `npm run deploy`.
+
+## Limitations
+
+This prototype has no published real-world fraud validation, calibrated probability estimate or latency benchmark. It should not independently approve or decline payments. Production use would need representative labeled data, threshold calibration, monitoring, authentication, abuse controls and a review process.
+
+## Contributions and license
+
+A useful contribution includes fixture-backed rule tests or a reproducible model evaluation. No license file is currently included; choose an explicit license before redistributing the implementation.
